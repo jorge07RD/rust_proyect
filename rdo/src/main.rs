@@ -19,9 +19,9 @@ struct Args {
     
     /// View profile - print the saved profile
     #[arg(long = "vp")]
+    #[serde(skip)]
     view_profile: bool,
 }
-
 
 
 

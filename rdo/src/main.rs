@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::io::{Write, Read};
+use std::io::{Write, Read, stdin, stdout};
 use serde::{Serialize, Deserialize};
 use std::fs;
 use std::process::Command;
@@ -125,6 +125,82 @@ impl Args {
         Ok(profile)
     }
     
+    // Verificar si una base de datos existe
+    fn database_exists(&self, dbname: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        if let (Some(xhost), Some(port), Some(username), Some(container_id)) = 
+            (&self.xhost, self.port, &self.username, &self.container_id) {
+            
+            // Construimos un comando psql para verificar si la base de datos existe
+            let check_cmd = format!(
+                "psql --host \"{}\" --port \"{}\" --username \"{}\" --dbname postgres -c \"SELECT 1 FROM pg_database WHERE datname = '{}';\"",
+                xhost, port, username, dbname
+            );
+            
+            // Preparamos el comando docker con variables de entorno si hay contraseña
+            let mut cmd = Command::new("docker");
+            cmd.args(&["exec"]);
+            
+            // Si hay contraseña, la agregamos como variable de entorno PGPASSWORD
+            if let Some(password) = &self.password {
+                cmd.args(&["-e", &format!("PGPASSWORD={}", password)]);
+            }
+            
+            // Completamos el comando con el ID del contenedor y el comando a ejecutar
+            cmd.args(&[container_id, "bash", "-c", &check_cmd]);
+            
+            // Ejecutamos el comando
+            let output = cmd.output()?;
+            
+            // Si el comando fue exitoso y la salida contiene un "1", la base de datos existe
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            Ok(output.status.success() && stdout.contains("(1 row)"))
+            
+        } else {
+            Err("Faltan datos del perfil".into())
+        }
+    }
+    
+    // Crear una nueva base de datos
+    fn create_database(&self, dbname: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if let (Some(xhost), Some(port), Some(username), Some(container_id)) = 
+            (&self.xhost, self.port, &self.username, &self.container_id) {
+            
+            println!("Creando base de datos '{}'...", dbname);
+            
+            // Construimos el comando para crear la base de datos
+            let create_cmd = format!(
+                "psql --host \"{}\" --port \"{}\" --username \"{}\" --dbname postgres -c \"CREATE DATABASE \\\"{}\\\";\"",
+                xhost, port, username, dbname
+            );
+            
+            // Preparamos el comando docker con variables de entorno si hay contraseña
+            let mut cmd = Command::new("docker");
+            cmd.args(&["exec"]);
+            
+            // Si hay contraseña, la agregamos como variable de entorno PGPASSWORD
+            if let Some(password) = &self.password {
+                cmd.args(&["-e", &format!("PGPASSWORD={}", password)]);
+            }
+            
+            // Completamos el comando con el ID del contenedor y el comando a ejecutar
+            cmd.args(&[container_id, "bash", "-c", &create_cmd]);
+            
+            // Ejecutamos el comando
+            let output = cmd.output()?;
+            
+            if output.status.success() {
+                println!("Base de datos '{}' creada exitosamente", dbname);
+                Ok(())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(format!("Error al crear la base de datos: {}", stderr).into())
+            }
+            
+        } else {
+            Err("Faltan datos del perfil".into())
+        }
+    }
+    
     // Generar ruta al archivo SQL basado en el nombre de la base de datos
     fn generate_file_path(&self, namedb: &str) -> Result<String, Box<dyn std::error::Error>> {
         // Usamos la ruta base del perfil, o una predeterminada si no está definida
@@ -142,6 +218,22 @@ impl Args {
     fn execute_psql(&self, namedb: &str) -> Result<(), Box<dyn std::error::Error>> {
         if let (Some(xhost), Some(port), Some(username), Some(container_id)) = 
             (&self.xhost, self.port, &self.username, &self.container_id) {
+            
+            // Verificamos si la base de datos existe
+            if !self.database_exists(namedb)? {
+                println!("La base de datos '{}' no existe.", namedb);
+                print!("¿Desea crearla? (s/n): ");
+                stdout().flush()?;
+                
+                let mut input = String::new();
+                stdin().read_line(&mut input)?;
+                
+                if input.trim().to_lowercase() == "s" {
+                    self.create_database(namedb)?;
+                } else {
+                    return Err(format!("Operación cancelada. La base de datos '{}' no existe.", namedb).into());
+                }
+            }
             
             // Generamos la ruta al archivo SQL basado en el nombre de la BD
             let file_path = self.generate_file_path(namedb)?;
@@ -177,6 +269,24 @@ impl Args {
             } else {
                 eprintln!("Error al ejecutar el comando:");
                 eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+                
+                // Verificamos si el error es por base de datos no existente
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr.contains("database") && stderr.contains("does not exist") {
+                    print!("¿Desea crear la base de datos '{}' y reintentar? (s/n): ", namedb);
+                    stdout().flush()?;
+                    
+                    let mut input = String::new();
+                    stdin().read_line(&mut input)?;
+                    
+                    if input.trim().to_lowercase() == "s" {
+                        // Crear la base de datos y reintentar
+                        self.create_database(namedb)?;
+                        return self.execute_psql(namedb);
+                    } else {
+                        return Err("Operación cancelada".into());
+                    }
+                }
             }
             
             Ok(())

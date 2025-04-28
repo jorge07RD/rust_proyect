@@ -16,6 +16,10 @@ struct Args {
 
     #[arg(short, long)]
     username: Option<String>,
+
+    /// docker container id
+    #[arg(short, long)]
+    container_id: Option<String>,
     
     /// View profile - print the saved profile
     #[arg(long = "vp")]
@@ -28,11 +32,12 @@ struct Args {
 
 impl Args {
 
-    fn new(xhost: String, port: u16, username: String) -> Self {
+    fn new(xhost: String, port: u16, username: String, container_id: String) -> Self {
         Self { 
             xhost: Some(xhost), 
             port: Some(port), 
             username: Some(username),
+            container_id: Some(container_id),
             view_profile: false 
         }
     }
@@ -40,13 +45,15 @@ impl Args {
 
     fn save(&self) -> Result<(), std::io::Error> {
         // Solo guardar si tenemos todos los campos necesarios
-        if self.xhost.is_some() && self.port.is_some() && self.username.is_some() {
+        if self.xhost.is_some() && self.port.is_some() && self.username.is_some() && self.container_id.is_some() {
             // parse the profile to json
             let json = serde_json::to_string(self).unwrap();
             // save the json to a file
             let mut file = std::fs::File::create("profile.json")?;
             file.write_all(json.as_bytes())?;
             println!("Profile saved to profile.json");
+        } else {
+            println!("Faltan campos necesarios para guardar el perfil.");
         }
         Ok(())
     }
@@ -93,9 +100,9 @@ fn main() {
     
     // De lo contrario, procede con el flujo normal
     // Solo ejecutar si tenemos todos los campos necesarios
-    if let (Some(xhost), Some(port), Some(username)) = (&args.xhost, args.port, &args.username) {
+    if let (Some(xhost), Some(port), Some(username), Some(container_id)) = (&args.xhost, args.port, &args.username, &args.container_id) {
         // crear un instance of Profile
-        let profile = Args::new(xhost.clone(), port, username.clone());
+        let profile = Args::new(xhost.clone(), port, username.clone(), container_id.clone());
         
         // save the profile
         if let Err(e) = profile.save() {

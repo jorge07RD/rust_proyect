@@ -24,7 +24,9 @@ cargo build --release
 
 ### Guardar un nuevo perfil:
 ```bash
-cargo run -- --xhost db --port 5432 --username odoo
+cargo run -- --xhost db --port 5432 --username odoo --container-id d48eed249db54609c5cbdc20f495d09a565922ada77a8d595c529a8f7f4e4b80 
+    o
+cargo run -- -x db -p 5432 -u odoo -c d48eed249db54609c5cbdc20f495d09a565922ada77a8d595c529a8f7f4e4b80
 ```
 
 ### Ver el perfil guardado:

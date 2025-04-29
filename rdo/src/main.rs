@@ -34,6 +34,11 @@ struct Args {
     #[arg(long = "vp")]
     #[serde(skip)]
     view_profile: bool,
+
+    /// Ver backups
+    #[arg(long = "vb")]
+    #[serde(skip)]
+    view_backups: bool,
     
     /// Nombre de la base de datos destino
     #[arg(short, long)]
@@ -59,6 +64,7 @@ impl Args {
             container_id: Some(container_id),
             dir_backup,
             view_profile: false,
+            view_backups: false, // Campo faltante añadido aquí
             namedb: None,
             run: false
         }
@@ -228,11 +234,12 @@ impl Args {
     // Generar ruta al archivo SQL basado en el nombre de la base de datos
     fn generate_file_path(&self, namedb: &str) -> Result<String, Box<dyn std::error::Error>> {
         // Usamos la ruta base del perfil, o una predeterminada si no está definida
+        // NOTA: Esta ruta es DENTRO del contenedor Docker
         let base_dir = self.dir_backup.as_ref()
             .map(|s| s.as_str())
             .unwrap_or("/tmp/backups");
         
-        // Construimos la ruta completa: dir_base/namedb/dump.sql
+        // Construimos la ruta completa: dir_base/namedb/dump.sql (DENTRO del contenedor)
         let file_path = format!("{}/{}/dump.sql", base_dir, namedb);
         
         Ok(file_path)
@@ -368,6 +375,62 @@ impl Args {
             Err("Faltan datos del perfil".into())
         }
     }
+
+    // Listar carpetas de backup y verificar si contienen dump.sql
+    fn view_backup_folders(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let (Some(container_id), Some(dir_backup)) = (&self.container_id, &self.dir_backup) {
+            println!("Listando carpetas de backup en {} (dentro del contenedor {}):", dir_backup, container_id);
+            
+            // Comando para listar directorios en la ruta de backup (dentro del contenedor)
+            let list_cmd = format!("find {} -maxdepth 1 -type d -not -path {} | sort", dir_backup, dir_backup);
+            
+            // Ejecutar el comando en el contenedor
+            let mut cmd = Command::new("docker");
+            cmd.args(&["exec", container_id, "bash", "-c", &list_cmd]);
+            
+            let output = cmd.output()?;
+            
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("Error al listar directorios: {}", stderr).into());
+            }
+            
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let dirs: Vec<&str> = stdout.lines().collect();
+            
+            if dirs.is_empty() {
+                println!("No se encontraron carpetas de backup.");
+                return Ok(());
+            }
+            
+            println!("Carpetas encontradas:");
+            
+            for dir in dirs {
+                let dir_name = dir.split('/').last().unwrap_or(dir);
+                
+                // Verificar si existe dump.sql en la carpeta
+                let check_sql_cmd = format!("[ -f {}/{}/dump.sql ] && echo 'true' || echo 'false'", dir_backup, dir_name);
+                
+                let mut check_cmd = Command::new("docker");
+                check_cmd.args(&["exec", container_id, "bash", "-c", &check_sql_cmd]); // Corrigiendo el nombre de la variable
+                
+                let check_output = check_cmd.output()?;
+                let has_dump = String::from_utf8_lossy(&check_output.stdout).trim() == "true";
+                
+                // Mostrar el resultado con una marca según si tiene dump.sql o no
+                let marker = if has_dump { "✓" } else { "X" };
+                println!("{} {} - {}", marker, dir_name, if has_dump { "Tiene dump.sql" } else { "No tiene dump.sql" });
+            }
+            
+            Ok(())
+        } else {
+            if self.container_id.is_none() {
+                Err("Falta ID del contenedor. Especifique --container_id".into())
+            } else {
+                Err("Falta directorio de backup. Especifique --dir_backup".into())
+            }
+        }
+    }
 } 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -378,6 +441,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = Args::load_and_print() {
             eprintln!("Error al cargar el perfil: {}", e);
         }
+        return Ok(());
+    }
+    
+    // Si se usa la bandera --vb, listar las carpetas de backup
+    if args.view_backups {
+        // Intentamos cargar el perfil guardado para obtener container_id y dir_backup
+        let profile = match Args::load() {
+            Ok(mut p) => {
+                // Actualizamos dir_backup si se proporcionó en línea de comandos
+                if let Some(dir_backup) = &args.dir_backup {
+                    p.dir_backup = Some(dir_backup.clone());
+                }
+                // Actualizamos container_id si se proporcionó en línea de comandos
+                if let Some(container_id) = &args.container_id {
+                    p.container_id = Some(container_id.clone());
+                }
+                p
+            },
+            Err(e) => {
+                // Si no hay perfil guardado, usamos los argumentos actuales
+                if let (Some(container_id), Some(dir_backup)) = (&args.container_id, &args.dir_backup) {
+                    let profile = Args::new(
+                        "".to_string(),  // xhost (no importa en este caso)
+                        0,              // port (no importa en este caso)
+                        "".to_string(),  // username (no importa en este caso)
+                        None,           // password (no importa en este caso)
+                        container_id.clone(),
+                        Some(dir_backup.clone())
+                    );
+                    profile
+                } else {
+                    return Err(format!("Error al cargar el perfil: {}. Especifique --container_id y --dir_backup.", e).into());
+                }
+            }
+        };
+        
+        profile.view_backup_folders()?;
         return Ok(());
     }
     
@@ -452,11 +552,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         // print the profile as JSON to console
         profile.print_json();
-    } else if !args.view_profile {
+    } else if !args.view_profile && !args.view_backups {
         println!("Para guardar un perfil, especifique xhost, port, username y container_id");
         println!("Ejemplo: cargo run -- --xhost db --port 5432 --username odoo --container_id mi-contenedor --dir_backup /tmp/backups");
         println!("Para autenticación con contraseña: --password mypassword o configure la variable PGPASSWORD");
         println!("Para ver el perfil guardado: cargo run -- --vp");
+        println!("Para ver las carpetas de backup: cargo run -- --vb");
         println!("Para restaurar una base de datos:");
         println!("cargo run -- --run --namedb mi_base_datos");
     }

@@ -46,6 +46,11 @@ Si necesitas incluir contraseña:
 cargo run -- --xhost db --port 5432 --username odoo --password micontraseña --container_id mi-contenedor --dir_backup /tmp/backups
 ```
 
+En forma corta
+```bash
+cargo run -x db -p 5432 -u odoo -w micontraseña -c mi-contenedor -d /tmp/backups
+```
+
 ### Ver el perfil guardado
 
 ```bash

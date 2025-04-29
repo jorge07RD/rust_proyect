@@ -7,7 +7,7 @@ use std::env;
 
 /// Herramienta para restaurar bases de datos Odoo en contenedores Docker
 
-#[derive(Parser, Debug, Serialize, Deserialize)]
+#[derive(Parser, Debug, Serialize, Deserialize, Clone)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// Host de la base de datos
@@ -178,8 +178,10 @@ impl Args {
             cmd.args(&["exec"]);
             
             // Si hay contraseña, la agregamos como variable de entorno PGPASSWORD
+            let mut password_provided = false;
             if let Some(password) = &self.password {
                 cmd.args(&["-e", &format!("PGPASSWORD={}", password)]);
+                password_provided = true;
             }
             
             // Completamos el comando con el ID del contenedor y el comando a ejecutar
@@ -193,6 +195,28 @@ impl Args {
                 Ok(())
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
+                
+                // Detectar si el error es por falta de contraseña
+                if stderr.contains("fe_sendauth: no password supplied") {
+                    if !password_provided {
+                        println!("Se requiere contraseña para el usuario '{}'", username);
+                        print!("Ingrese la contraseña: ");
+                        stdout().flush()?;
+                        
+                        // Leer la contraseña desde la entrada estándar
+                        let mut password = String::new();
+                        stdin().read_line(&mut password)?;
+                        let password = password.trim().to_string();
+                        
+                        // Crear una nueva instancia con la contraseña
+                        let mut new_self = self.clone();
+                        new_self.password = Some(password);
+                        
+                        // Intentar nuevamente con la nueva contraseña
+                        return new_self.create_database(dbname);
+                    }
+                }
+                
                 Err(format!("Error al crear la base de datos: {}", stderr).into())
             }
             
@@ -229,7 +253,33 @@ impl Args {
                 stdin().read_line(&mut input)?;
                 
                 if input.trim().to_lowercase() == "s" {
-                    self.create_database(namedb)?;
+                    match self.create_database(namedb) {
+                        Ok(_) => println!("Base de datos creada correctamente."),
+                        Err(e) => {
+                            // Si el error es porque no se puede crear la BD, intentamos detectar
+                            // si es porque falta la contraseña
+                            let error_msg = e.to_string();
+                            if error_msg.contains("fe_sendauth: no password supplied") {
+                                println!("Se requiere contraseña para el usuario '{}'", username);
+                                print!("Ingrese la contraseña: ");
+                                stdout().flush()?;
+                                
+                                // Leer la contraseña desde la entrada estándar
+                                let mut password = String::new();
+                                stdin().read_line(&mut password)?;
+                                let password = password.trim().to_string();
+                                
+                                // Crear una nueva instancia con la contraseña
+                                let mut new_self = self.clone();
+                                new_self.password = Some(password);
+                                
+                                // Intentar nuevamente con la nueva contraseña
+                                new_self.create_database(namedb)?;
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                    }
                 } else {
                     return Err(format!("Operación cancelada. La base de datos '{}' no existe.", namedb).into());
                 }
@@ -252,8 +302,10 @@ impl Args {
             cmd.args(&["exec"]);
             
             // Si hay contraseña, la agregamos como variable de entorno PGPASSWORD
+            let mut password_provided = false;
             if let Some(password) = &self.password {
                 cmd.args(&["-e", &format!("PGPASSWORD={}", password)]);
+                password_provided = true;
             }
             
             // Completamos el comando con el ID del contenedor y el comando a ejecutar
@@ -272,7 +324,26 @@ impl Args {
                 
                 // Verificamos si el error es por base de datos no existente
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                if stderr.contains("database") && stderr.contains("does not exist") {
+                
+                if stderr.contains("fe_sendauth: no password supplied") {
+                    if !password_provided {
+                        println!("Se requiere contraseña para el usuario '{}'", username);
+                        print!("Ingrese la contraseña: ");
+                        stdout().flush()?;
+                        
+                        // Leer la contraseña desde la entrada estándar
+                        let mut password = String::new();
+                        stdin().read_line(&mut password)?;
+                        let password = password.trim().to_string();
+                        
+                        // Crear una nueva instancia con la contraseña
+                        let mut new_self = self.clone();
+                        new_self.password = Some(password);
+                        
+                        // Intentar nuevamente con la nueva contraseña
+                        return new_self.execute_psql(namedb);
+                    }
+                } else if stderr.contains("database") && stderr.contains("does not exist") {
                     print!("¿Desea crear la base de datos '{}' y reintentar? (s/n): ", namedb);
                     stdout().flush()?;
                     
@@ -287,6 +358,9 @@ impl Args {
                         return Err("Operación cancelada".into());
                     }
                 }
+                
+                // Si llegamos aquí, no fue ninguno de los errores conocidos
+                return Err(format!("Error al ejecutar el comando: {}", stderr).into());
             }
             
             Ok(())

@@ -9,6 +9,7 @@ Una herramienta de línea de comandos escrita en Rust para facilitar la restaura
 - Generación automática de rutas basadas en el nombre de la base de datos
 - Soporte para autenticación con contraseña (directa o mediante variable de entorno)
 - Interfaz de línea de comandos intuitiva
+- Verificación de backups disponibles dentro del contenedor
 
 ## Requisitos
 
@@ -57,6 +58,20 @@ cargo run -x db -p 5432 -u odoo -w micontraseña -c mi-contenedor -d /tmp/backup
 cargo run -- --vp
 ```
 
+### Ver backups disponibles
+
+Para listar las carpetas de backup disponibles dentro del contenedor:
+
+```bash
+cargo run -- --vb
+```
+
+O especificando el contenedor y la ruta si no hay perfil guardado:
+
+```bash
+cargo run -- --vb --container_id mi-contenedor --dir_backup /tmp/backups
+```
+
 ### Restaurar una base de datos
 
 Usando el perfil guardado:
@@ -79,7 +94,7 @@ PGPASSWORD=micontraseña cargo run -- --run --namedb nombre_base_datos
 
 ## Estructura de archivos
 
-La herramienta espera que los dumps SQL estén organizados en la siguiente estructura dentro del contenedor:
+La herramienta espera que los dumps SQL estén organizados en la siguiente estructura **dentro del contenedor Docker**:
 
 ```
 /ruta_base_backups/
@@ -92,6 +107,8 @@ Por ejemplo, si `dir_backup` es `/tmp/backups` y el nombre de la base de datos e
 ```
 /tmp/backups/produccion_04_28_2025/dump.sql
 ```
+
+**Importante:** Todas las rutas especificadas con `--dir_backup` son relativas al sistema de archivos **dentro del contenedor Docker**, no al sistema de archivos del host.
 
 ## Opciones disponibles
 
@@ -106,6 +123,7 @@ Por ejemplo, si `dir_backup` es `/tmp/backups` y el nombre de la base de datos e
 | `--namedb`, `-n` | Nombre de la base de datos destino |
 | `--run`, `-r` | Ejecutar la restauración |
 | `--vp` | Ver el perfil guardado |
+| `--vb` | Ver carpetas de backup disponibles |
 
 ## Ejemplo completo
 
@@ -114,7 +132,12 @@ Por ejemplo, si `dir_backup` es `/tmp/backups` y el nombre de la base de datos e
 ./rdo --xhost db --port 5432 --username odoo --container_id d48eed249db5 --dir_backup /tmp/backups --password secreto
 ```
 
-2. Restaurar una base de datos:
+2. Ver los backups disponibles:
+```bash
+./rdo --vb
+```
+
+3. Restaurar una base de datos:
 ```bash
 ./rdo --run --namedb produccion_04_28_2025
 ```
@@ -124,3 +147,5 @@ Por ejemplo, si `dir_backup` es `/tmp/backups` y el nombre de la base de datos e
 - La contraseña puede proporcionarse mediante el argumento `--password` o mediante la variable de entorno `PGPASSWORD`.
 - El perfil se guarda en el archivo `profile.json` en el directorio actual.
 - Los mensajes de error del comando `psql` se muestran en caso de fallos.
+- Al listar backups con `--vb`, se mostrará una marca ✓ junto a las carpetas que contienen un archivo `dump.sql` válido.
+- La herramienta verifica si la base de datos existe antes de intentar restaurarla y ofrece crearla si es necesario.

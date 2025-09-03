@@ -21,7 +21,7 @@ Una herramienta de línea de comandos escrita en Rust para facilitar la restaura
 
 ```bash
 # Clonar el repositorio
-git clone https://github.com/tu-usuario/rdo.git
+git clone https://github.com/jorge07RD/rust_proyect.git
 cd rdo
 
 # Compilar el proyecto

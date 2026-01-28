@@ -1,0 +1,8 @@
+{
+  "xhost": "db",
+  "port": 5432,
+  "username": "odoo",
+  "password": "tu_password_aqui",
+  "container_id": "d48eed249db5",
+  "dir_backup": "/tmp/backups"
+}
